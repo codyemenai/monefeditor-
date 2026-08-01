@@ -15,6 +15,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -28,6 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 fun EditorScreen(modifier: Modifier = Modifier, viewModel: EditorViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     val activeTab = state.tabs.firstOrNull { it.id == state.activeTabId } ?: state.tabs.firstOrNull()
+    val fileName = remember { mutableStateOf("note.txt") }
 
     Column(
         modifier = modifier
@@ -69,6 +72,19 @@ fun EditorScreen(modifier: Modifier = Modifier, viewModel: EditorViewModel = vie
             Button(onClick = { viewModel.findMatches() }) { Text("Find") }
             Button(onClick = { viewModel.replaceAllMatches() }) { Text("Replace") }
             Button(onClick = { viewModel.applyAutoIndentToActiveTab() }) { Text("Indent") }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+            OutlinedTextField(
+                value = fileName.value,
+                onValueChange = { fileName.value = it },
+                modifier = Modifier.weight(1f),
+                label = { Text("File name") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+            )
+            Button(onClick = { viewModel.saveCurrentFile(fileName.value) }) { Text("Save") }
+            Button(onClick = { viewModel.loadFile(fileName.value) }) { Text("Open") }
         }
 
         OutlinedTextField(

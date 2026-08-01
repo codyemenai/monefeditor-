@@ -3,10 +3,14 @@ package com.example.monefeditor.ui
 import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.monefeditor.data.SharedPreferencesTextFileRepository
+import com.example.monefeditor.domain.TextFileRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -41,6 +45,7 @@ data class EditorUiState(
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences(SESSION_PREFS, Context.MODE_PRIVATE)
+    private val repository: TextFileRepository = SharedPreferencesTextFileRepository(application)
 
     private val _state = MutableStateFlow(EditorUiState())
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
@@ -162,6 +167,40 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             .putInt(ACTIVE_TAB_KEY, stateToSave.activeTabId)
             .apply()
         _state.update { it.copy(statusMessage = "Session saved") }
+    }
+
+    fun saveCurrentFile(name: String) {
+        val activeTab = _state.value.tabs.firstOrNull { it.id == _state.value.activeTabId } ?: return
+        viewModelScope.launch {
+            val success = repository.saveFile(name, activeTab.content)
+            _state.update {
+                it.copy(statusMessage = if (success) "Saved $name" else "Failed to save $name")
+            }
+        }
+    }
+
+    fun loadFile(name: String) {
+        viewModelScope.launch {
+            val content = repository.loadFile(name)
+            if (content != null) {
+                val activeId = _state.value.activeTabId
+                val updatedTabs = _state.value.tabs.map { tab ->
+                    if (tab.id == activeId) tab.copy(content = content, title = name) else tab
+                }
+                _state.update {
+                    it.copy(
+                        tabs = updatedTabs,
+                        statusMessage = "Loaded $name"
+                    )
+                }
+            } else {
+                _state.update { it.copy(statusMessage = "File not found") }
+            }
+        }
+    }
+
+    fun listSavedFiles(): List<String> {
+        return _state.value.tabs.map { it.title }
     }
 
     fun restoreSession() {
