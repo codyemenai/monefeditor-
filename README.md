@@ -1,19 +1,25 @@
 # Monef Editor
 
-Monef Editor is a native Android code editor built with Kotlin and Jetpack Compose.
+Monef Editor is a mobile-first Android code editor inspired by the spirit of Notepad++ but tailored for phones and tablets.
 
-## What is included
-- Basic editor screen
-- Multi-tab concept through ViewModel state
-- Search and replace support
-- Auto-indent toggle
-- Session save/restore concept
-- No AI features included
+## Included features
+- Multi-tab editing experience
+- Search and replace with optional regex
+- Auto-indent support
+- Session save/restore
+- Save, open, and delete text files using internal storage
+- Basic syntax-aware text styling
+- Theme toggle and font-size control
+- File picking from the device for real text files
+- Mobile-friendly Compose UI
+- No AI features inside the editor
 
 ## Project structure
 - app/src/main/java/com/example/monefeditor/MainActivity.kt
 - app/src/main/java/com/example/monefeditor/ui/EditorScreen.kt
 - app/src/main/java/com/example/monefeditor/ui/EditorViewModel.kt
+- app/src/main/java/com/example/monefeditor/data/InternalStorageTextFileRepository.kt
+- app/src/main/java/com/example/monefeditor/domain/TextFileRepository.kt
 
 ## Requirements
 - JDK 17
@@ -28,4 +34,4 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ```
 
 ## Notes
-This repository is intended to be a solid foundation for a mobile-first code editor with future support for syntax highlighting, folding, file tree, and plugins.
+The app is structured for future expansion with syntax highlighting, folding, a file tree, and plugin support.

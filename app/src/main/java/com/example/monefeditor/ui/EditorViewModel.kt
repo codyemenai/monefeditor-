@@ -2,15 +2,21 @@ package com.example.monefeditor.ui
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.monefeditor.data.SharedPreferencesTextFileRepository
+import com.example.monefeditor.data.InternalStorageTextFileRepository
+import com.example.monefeditor.domain.EditorSettings
+import com.example.monefeditor.domain.SimpleSyntaxHighlighter
+import com.example.monefeditor.domain.TextDocumentModel
 import com.example.monefeditor.domain.TextFileRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -23,7 +29,8 @@ private const val ACTIVE_TAB_KEY = "active_tab"
 data class EditorTab(
     val id: Int,
     val title: String,
-    val content: String
+    val content: String,
+    val document: TextDocumentModel? = null
 )
 
 data class EditorUiState(
@@ -40,19 +47,31 @@ data class EditorUiState(
     val useRegex: Boolean = false,
     val autoIndent: Boolean = true,
     val indentSize: Int = 4,
+    val savedFiles: List<String> = emptyList(),
+    val settings: EditorSettings = EditorSettings(),
     val statusMessage: String = ""
 )
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences(SESSION_PREFS, Context.MODE_PRIVATE)
-    private val repository: TextFileRepository = SharedPreferencesTextFileRepository(application)
+    private val repository: TextFileRepository = InternalStorageTextFileRepository(application)
+    private val syntaxHighlighter = SimpleSyntaxHighlighter()
 
     private val _state = MutableStateFlow(EditorUiState())
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
 
+    init {
+        refreshSavedFiles()
+    }
+
     fun createNewTab() {
         val nextId = (_state.value.tabs.maxOfOrNull { it.id } ?: 0) + 1
-        val newTab = EditorTab(id = nextId, title = "untitled-$nextId", content = "")
+        val newTab = EditorTab(
+            id = nextId,
+            title = "untitled-$nextId",
+            content = "",
+            document = TextDocumentModel(id = nextId, title = "untitled-$nextId", content = "")
+        )
         _state.update { current ->
             current.copy(
                 tabs = current.tabs + newTab,
@@ -70,7 +89,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val activeId = _state.value.activeTabId
         _state.update { current ->
             val updatedTabs = current.tabs.map { tab ->
-                if (tab.id == activeId) tab.copy(content = content) else tab
+                if (tab.id == activeId) {
+                    val document = tab.document?.copy(content = content) ?: TextDocumentModel(
+                        id = tab.id,
+                        title = tab.title,
+                        content = content
+                    )
+                    tab.copy(content = content, document = document)
+                } else {
+                    tab
+                }
             }
             current.copy(tabs = updatedTabs)
         }
@@ -80,7 +108,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val activeId = _state.value.activeTabId
         _state.update { current ->
             val updatedTabs = current.tabs.map { tab ->
-                if (tab.id == activeId) tab.copy(title = title.ifBlank { "untitled" }) else tab
+                if (tab.id == activeId) {
+                    val document = tab.document?.copy(title = title.ifBlank { "untitled" })
+                    tab.copy(title = title.ifBlank { "untitled" }, document = document)
+                } else {
+                    tab
+                }
             }
             current.copy(tabs = updatedTabs)
         }
@@ -169,28 +202,56 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(statusMessage = "Session saved") }
     }
 
+    fun toggleDarkTheme() {
+        _state.update { current ->
+            current.copy(settings = current.settings.copy(darkTheme = !current.settings.darkTheme))
+        }
+    }
+
+    fun updateFontSize(fontSize: Float) {
+        _state.update { current ->
+            current.copy(settings = current.settings.copy(fontSize = fontSize))
+        }
+    }
+
+    fun getSyntaxTokensForActiveTab(): List<Pair<String, androidx.compose.ui.graphics.Color>> {
+        val activeTab = _state.value.tabs.firstOrNull { it.id == _state.value.activeTabId } ?: return emptyList()
+        val language = activeTab.document?.language ?: "text"
+        return syntaxHighlighter.highlight(activeTab.content, language)
+    }
+
     fun saveCurrentFile(name: String) {
         val activeTab = _state.value.tabs.firstOrNull { it.id == _state.value.activeTabId } ?: return
+        val fileName = name.ifBlank { "untitled.txt" }
         viewModelScope.launch {
-            val success = repository.saveFile(name, activeTab.content)
-            _state.update {
-                it.copy(statusMessage = if (success) "Saved $name" else "Failed to save $name")
+            val success = repository.saveFile(fileName, activeTab.content)
+            if (success) {
+                refreshSavedFiles()
+                _state.update { it.copy(statusMessage = "Saved $fileName") }
+            } else {
+                _state.update { it.copy(statusMessage = "Failed to save $fileName") }
             }
         }
     }
 
     fun loadFile(name: String) {
+        val fileName = name.ifBlank { "untitled.txt" }
         viewModelScope.launch {
-            val content = repository.loadFile(name)
+            val content = repository.loadFile(fileName)
             if (content != null) {
                 val activeId = _state.value.activeTabId
                 val updatedTabs = _state.value.tabs.map { tab ->
-                    if (tab.id == activeId) tab.copy(content = content, title = name) else tab
+                    if (tab.id == activeId) {
+                        val document = TextDocumentModel(id = tab.id, title = fileName, content = content, language = tab.document?.detectLanguageFromName() ?: "text")
+                        tab.copy(content = content, title = fileName, document = document)
+                    } else {
+                        tab
+                    }
                 }
                 _state.update {
                     it.copy(
                         tabs = updatedTabs,
-                        statusMessage = "Loaded $name"
+                        statusMessage = "Loaded $fileName"
                     )
                 }
             } else {
@@ -199,9 +260,56 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun listSavedFiles(): List<String> {
-        return _state.value.tabs.map { it.title }
+    fun deleteCurrentFile(name: String? = null) {
+        val fileName = name ?: _state.value.tabs.firstOrNull { it.id == _state.value.activeTabId }?.title
+        if (fileName.isNullOrBlank()) return
+        viewModelScope.launch {
+            val success = repository.deleteFile(fileName)
+            if (success) {
+                refreshSavedFiles()
+                _state.update { it.copy(statusMessage = "Deleted $fileName") }
+            } else {
+                _state.update { it.copy(statusMessage = "Failed to delete $fileName") }
+            }
+        }
     }
+
+    fun loadFileFromUri(uri: Uri) {
+        val displayName = uri.lastPathSegment?.substringAfterLast('/') ?: "picked-file.txt"
+        viewModelScope.launch {
+            val content = withContext(Dispatchers.IO) {
+                getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }
+            if (content != null) {
+                val activeId = _state.value.activeTabId
+                val updatedTabs = _state.value.tabs.map { tab ->
+                    if (tab.id == activeId) {
+                        val document = TextDocumentModel(id = tab.id, title = displayName, content = content, language = tab.document?.detectLanguageFromName() ?: "text")
+                        tab.copy(content = content, title = displayName, document = document)
+                    } else {
+                        tab
+                    }
+                }
+                _state.update {
+                    it.copy(
+                        tabs = updatedTabs,
+                        statusMessage = "Loaded $displayName"
+                    )
+                }
+            } else {
+                _state.update { it.copy(statusMessage = "Failed to read selected file") }
+            }
+        }
+    }
+
+    fun refreshSavedFiles() {
+        viewModelScope.launch {
+            val files = repository.listFiles()
+            _state.update { it.copy(savedFiles = files) }
+        }
+    }
+
+    fun listSavedFiles(): List<String> = _state.value.savedFiles
 
     fun restoreSession() {
         val serialized = prefs.getString(SESSION_KEY, null) ?: return
